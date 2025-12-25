@@ -1,5 +1,8 @@
-fn sum(a, b) {
-  return a + b
-}
+fn main()
+{
+  var exitCode = 0;
+  var char = 65;
 
-sum(10, 20)
+  putchar(char);
+  exit(exitCode);
+}

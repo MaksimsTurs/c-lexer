@@ -1,131 +1,198 @@
 #include "parser.h"
-#include "utils.h"
 
-static t_parser parser = {
-  .lexer = NULL,
-  .root  = NULL,
-  .index = 0
-};
+static long long     g_tokens_index = 0;
+static t_token*      g_token        = NULL;
+static t_token_list* g_tokens_list  = NULL;
+static t_stmt        g_programm     = {0};
 
-int init_parser(t_lexer* lexer)
+void parser_init(t_token_list* tokens)
 {
-  parser.lexer = lexer;
+  if(tokens == NULL)
+  {
+    LOG(ERROR, "Tokens list is null!\n");
+    exit(-1);
+  }
 
-  return 1;
+  g_tokens_list = tokens;
 }
 
-t_token* next_token()
+void parser_parse(t_token_list* tokens)
 {
-  if(parser.index <= parser.lexer->tokens_length)
+  g_tokens_list = tokens;
+  g_programm.type = AST_STMT_PROGRAMM;
+
+  t_token* token = next_token();
+  
+  print_ast(parser_parse_unar_expr(token));
+}
+
+t_expr* parser_parse_primary_expr(t_token* token)
+{
+  if(token != NULL)
   {
-    return &parser.lexer->tokens[parser.index++];
+    t_expr* expr = (t_expr*)malloc(sizeof(t_expr));
+  
+    expr->expr = (void*)token;
+    expr->type = token_type_to_ast_type(token->type);
+  
+    return expr;
   }
 
   return NULL;
 }
 
-t_node* parse_func_def(t_token* token)
+t_expr* parser_parse_bin_expr(t_token* token)
 {
-  t_node* func_def = create_node(AST_NODE_FUNC_DEFINITION);
-
-  init_list(func_def, 1);
-  push_in_list(func_def, token);
-
-  token = next_token();
-
-  if(!cmp_strn("(", token->buffer, token->buffer_length))
+  if(token != NULL)
   {
-    return NULL;
+    t_bin_expr* bin_expr = (t_bin_expr*)malloc(sizeof(t_bin_expr));
+    t_expr* node_expr = (t_expr*)malloc(sizeof(t_expr));
+
+    node_expr->type = AST_EXPR_BINARY;
+    node_expr->expr = bin_expr;
+
+    bin_expr->right = parser_parse_primary_expr(token);
+    bin_expr->op = next_token();
+    bin_expr->left = parser_parse_bin_expr(next_token());
+
+    return node_expr;
   }
 
-  token = next_token();
-  func_def->left = parse_func_args(token);
-  token = next_token();
-  if(!cmp_strn("{", token->buffer, token->buffer_length))
-  {
-    return NULL;
-  }
-  
-  func_def->right = parse_block(token);
-
-  return func_def;
+  return NULL;
 }
 
-t_node* parse_block(t_token* token)
+t_expr* parser_parse_unar_expr(t_token* token)
 {
-  t_node* block = create_node(AST_NODE_BLOCK);
-  
-  init_list(block, 5);
-
-  token = next_token();
-
-  switch(token->type)
+  if(token != NULL)
   {
-    case TOKEN_TYPE_KEYWORD:
+    t_unar_expr* unar_expr = (t_unar_expr*)malloc(sizeof(t_unar_expr));
+    t_expr* expr = (t_expr*)malloc(sizeof(t_expr));
+
+    expr->type = AST_EXPR_UNARY;
+    expr->expr = unar_expr;
+
+    unar_expr->operator = token;
+    unar_expr->expr = parser_parse_bin_expr(next_token());
+
+    return expr;
+  }
+
+  return NULL;
+}
+
+void print_ast(t_expr* root)
+{
+  static int margin = 0;
+
+  switch(root->type)
+  {
+    case AST_STMT_PROGRAMM:
+      PRINT_WITH_MARGIN(margin, "%*sProgramm:\n");
+      margin += 2;
+
+      print_ast(root->expr);
+    break;
+    case AST_EXPR_UNARY:
+    {
+      t_unar_expr* unar_expr = (t_unar_expr*)root->expr;
+      PRINT_WITH_MARGIN(margin, "%*sUnary:\n");
+      margin += 2;
+      
+      PRINT_WITH_MARGIN(margin, "%*sOp: %s\n", unar_expr->operator->buffer);
+      print_ast(unar_expr->expr);
+    }
+    break;
+    case AST_EXPR_BINARY:
+    {
+      t_bin_expr* bin_expr = (t_bin_expr*)root->expr;
+      PRINT_WITH_MARGIN(margin, "%*sBinary:\n");
+      margin +=2;
+
+      if(bin_expr->left)
+      {
+        PRINT_WITH_MARGIN(margin, "%*sLeft:");
+        if(bin_expr->left->type != AST_EXPR_NUMBER_LITERAL &&
+           bin_expr->left->type != AST_EXPR_IDENTIFIER)
+        {
+          printf("\n");
+        }
+
+        margin +=2;
+        print_ast(bin_expr->left);
+        margin -= 2;
+      }
+
+      if(bin_expr->op)
+      {
+        PRINT_WITH_MARGIN(margin, "%*sOp: %s\n", bin_expr->op->buffer);
+      }
+
+      if(bin_expr->right)
+      {
+        PRINT_WITH_MARGIN(margin, "%*sRight:");
+        if(bin_expr->right->type != AST_EXPR_NUMBER_LITERAL &&
+           bin_expr->right->type != AST_EXPR_IDENTIFIER)
+        {
+          printf("\n");
+        }
+
+        margin +=2;
+        print_ast(bin_expr->right);
+      }
+    }
+    break;
+    case AST_EXPR_IDENTIFIER:
+    case AST_EXPR_NUMBER_LITERAL:
+    {
+      t_token* token = (t_token*)root->expr;
+      PRINT_WITH_MARGIN(1, "%*s%s\n", token->buffer);
+    }
     break;
   }
 
-  return block;
+  margin -= 2;
 }
 
-t_node* parse_func_args(t_token* token)
+t_token* peek_token(long long offset)
 {
-  t_node* arg_list = create_node(AST_NODE_FUNC_ARG);
-
-  init_list(arg_list, 5);
-  // First argument.
-  push_in_list(arg_list, token);
-
-  while((token = next_token()) && (token->type != TOKEN_TYPE_PARENT_BRACKET_RIGHT))
+  if(g_tokens_index + offset < g_tokens_list->length)
   {
-    if(token->type == TOKEN_TYPE_COMMA)
-    {
-      continue;
-    }
-
-    push_in_list(arg_list, token);
+    return &g_tokens_list->tokens[(g_tokens_index + offset) - 1];
   }
 
-  return arg_list;
+  return NULL;
 }
 
-int init_list(t_node* node, int size)
+t_token* next_token()
 {
-  node->body = (t_token**)malloc(sizeof(t_token*) * size);
-  node->body_length = 0;
-  node->body_size = size;
-
-  return 0;
-}
-
-int push_in_list(t_node* node, t_token* token)
-{
-  if(node->body_length + 1 == node->body_size)
+  if(g_tokens_index < g_tokens_list->length)
   {
-    node->body_size *= 2;
-    node->body = (t_token**)realloc(node->body, sizeof(t_token*) * node->body_size);
+    return &g_tokens_list->tokens[g_tokens_index++];
   }
 
-  node->body[node->body_length++] = token;
-
-  return 0;
+  return NULL;
 }
 
-t_node* create_node(t_ast_node_type expr_type)
+t_token* prev_token()
 {
-  t_node* new_node = NULL;
-
-  new_node = (t_node*)malloc(sizeof(t_node));
-
-  if(new_node == NULL)
+  if(g_tokens_index > 0)
   {
-    return NULL;
+    g_tokens_index--;
+    return &g_tokens_list->tokens[g_tokens_index];
   }
 
-  new_node->left = NULL;
-  new_node->right = NULL;
-  new_node->body = NULL;
-  new_node->body_type = expr_type;
+  return NULL;
+}
 
-  return new_node;
+int token_type_to_ast_type(int token_type)
+{
+  switch(token_type)
+  {
+    case TOKEN_NUMBER_LITERAL: return AST_EXPR_NUMBER_LITERAL;
+    case TOKEN_IDENTIFIER:     return AST_EXPR_IDENTIFIER;
+    case TOKEN_NOT:            return AST_EXPR_UNARY;
+    default:
+      LOG(ERROR, "Unknown token type %i!\n", token_type);
+      exit(-1);
+  }
 }
