@@ -3,8 +3,9 @@
 
 #include <errno.h>
 #include <stdio.h>
-// TODO: Implement custom set.
-#include "c_map.h"
+#include <stdlib.h>
+#include <string.h>
+
 #include "macros.h"
 
 #define TOKEN_BUFFER_CAPACITY    (unsigned char)255
@@ -14,7 +15,6 @@ typedef enum e_token_type {
   // Base
   TOKEN_KEYWORD,
   TOKEN_IDENTIFIER,
-  TOKEN_TYPENAME,
   TOKEN_UNREACHABLE,
   // Punctuation
   TOKEN_WHITE_SPACE,
@@ -54,14 +54,13 @@ typedef enum e_token_type {
 } t_token_type;
 
 typedef FILE t_file;
-typedef cmap t_cmap;
 
 typedef struct s_token {
-  t_token_type  type;
-  char          buffer[TOKEN_BUFFER_CAPACITY];
-  unsigned char buffer_length;
-  long long     col;
-  long long     row;
+  t_token_type type;
+  char*        value;
+  int          value_length;
+  long long    col;
+  long long    row;
 } t_token;
 
 typedef struct s_token_list {
@@ -73,35 +72,37 @@ typedef struct s_token_list {
 } t_token_list;
 
 typedef struct s_lexer {
+  char*     pos;
   char      ch;
   long long col;
   long long row;
 } t_lexer;
 
 // Token list 
+t_token*      lexer_create_token();
 t_token*      lexer_consume_token();
 t_token*      lexer_peek_token(long long offset);
 t_token*      lexer_next_token();
-t_token*      lexer_expect_and_next_token(unsigned int token_type);
-t_token*      lexer_expect_and_peek_token(unsigned int token_type, long long offset);
-void          lexer_set_list_index(long long index);
-long long     lexer_get_list_index();
+long long     lexer_get_index();
+void          lexer_set_index(long long index);
+
+unsigned char lexer_is_end_of_list();
 
 // Lexer
-t_token_list* lexer_tokenize(const char* entry_point);
-void          lexer_init(const char* entry_point);
+void          lexer_tokenize(const char* entry_point);
+void          lexer_open_file(const char* path);
 void          lexer_push_token(int token_type);
 
+char*         lexer_get_cursor_pos();
 char          lexer_peek_char();
 void          lexer_next_char();
 
 unsigned char lexer_is_eof();
 unsigned char lexer_is_alphanumeric();
 unsigned char lexer_is_digit();
-unsigned char lexer_is_typename(const char* buffer);
-unsigned char lexer_is_keyword(const char* buffer);
+unsigned char lexer_is_keyword(const t_token* token);
+unsigned char lexer_is_operator(const t_token* token);
 unsigned char lexer_is_char(char ch);
-unsigned char lexer_is_operator(int token_type);
 
 // Lexer utils 
 void          lexer_print_tokens();

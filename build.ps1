@@ -1,24 +1,21 @@
 $INCLUDE_PATH = "./include"
-$LIB_PATH     = "./lib"
 $SRC_PATH     = "./src"
-$BUILD_TARGET = "debug"
+
 $CCOMPILER    = "clang"
-$CFLAGS       = "-Wall -Wextra -O2 "
+$CFLAGS       = "-std=c11 "
+
 $SOURCES      = @(
   "main.c"
 
+  "${src_path}/expr.c"
+  "${src_path}/scope.c"
   "${src_path}/lexer.c"
-  # "${src_path}/parser.c"
   "${src_path}/nasm.c"
-  "${src_path}/module.c"
-
-  "${LIB_PATH}/c_map.c"
 )
 
-function Create-Compile-Command($target)
+function NewCompileCommand($target)
 {
-  $logTarget = Get-Log-Flags-From-Target($target)
-  $command = "$CCOMPILER $logTarget $CFLAGS"
+  $command = "$CCOMPILER $CFLAGS"
   
   foreach($FILE in $SOURCES)
   {
@@ -30,22 +27,6 @@ function Create-Compile-Command($target)
   return $command
 }
 
-function Get-Log-Flags-From-Target($target)
-{
-  switch($target)
-  {
-    "debug" {
-      return "-DASTRO_DEBUG"
-    }
-    "trace" {
-      return "-DASTRO_TRACE"
-    }
-    "destr" {
-      return "-DASTRO_DESTR"
-    }
-  }
-}
-
-$command = Create-Compile-Command($BUILD_TARGET)
+$command = NewCompileCommand($BUILD_TARGET)
 
 Invoke-Expression $command

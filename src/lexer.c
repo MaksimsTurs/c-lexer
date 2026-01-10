@@ -1,65 +1,29 @@
 #include "lexer.h"
 
-static t_cmap g_keywords = {0};
-static t_cmap g_typenames = {0};
 static t_file* g_file = NULL;
-static t_token_list g_token_list = {
-  .capacity = 0,
-  .length = 0,
-  .items = NULL
-};
-static t_lexer g_lexer = {
-  .ch = 0,
-  .col = 1,
-  .row = 1
-};
+static t_token_list g_token_list = {0};
+static t_lexer g_lexer = {0};
 
 // 
 // Lexer
 //
 
-void lexer_init(const char* entry_point)
+void lexer_open_file(const char* path)
 {
-  g_file = fopen(entry_point, "r");
-
-  if(g_file == NULL)
-  {
-    LOG(ERROR, "Can not open file \"%s\"\n!", entry_point);
-    exit(errno);
-  }
-
+  g_file = fopen(path, "r");
   g_lexer.ch = getc(g_file);
+  g_lexer.pos = g_file->_base;
   g_token_list.items = (t_token*)malloc(sizeof(t_token) * TOKEN_LIST_INIT_CAPACITY);
   g_token_list.capacity = TOKEN_LIST_INIT_CAPACITY;
-
-  if(g_token_list.items == NULL)
-  {
-    LOG(ERROR, "Can not initialize a memory for tokens\n!");
-    exit(errno);
-  }
-
-  cmap_dinit(&g_keywords, 8, 0);
-
-  cmap_set(&g_keywords, "if",     "if");
-  cmap_set(&g_keywords, "else",   "else");
-  cmap_set(&g_keywords, "for",    "for");
-  cmap_set(&g_keywords, "fn",     "fn");
-  cmap_set(&g_keywords, "return", "return");
-  cmap_set(&g_keywords, "var",    "var");
-  cmap_set(&g_keywords, "const",  "const");
-
-  cmap_dinit(&g_typenames, 12, 0);
-
-  cmap_set(&g_typenames, "i8",  "i8");
 }
 
-t_token_list* lexer_tokenize(const char* entry_point)
+void lexer_tokenize(const char* entry_point)
 {
-  lexer_init(entry_point);
+  lexer_open_file(entry_point);
 
   while(!lexer_is_eof())
   {
-    if(lexer_is_alphanumeric())
+    if(lexer_is_char('_') || lexer_is_alphanumeric())
     {
       lexer_push_token(TOKEN_IDENTIFIER);
     }
@@ -96,61 +60,27 @@ t_token_list* lexer_tokenize(const char* entry_point)
       }
     }
   }
-
-  return &g_token_list;
 }
 
 void lexer_push_token(int token_type)
 {
   t_token* token = NULL;
 
-  // We skip all this tokens, therefore we don't need to use memory for this
-  // tokens.
-  if(token_type != TOKEN_WHITE_SPACE &&
-     token_type != TOKEN_NEW_LINE &&
-     token_type != TOKEN_CARRIAGE_RETURN &&
-     token_type != TOKEN_DIV)
-  {
-    token = lexer_consume_token();
-    token->col = g_lexer.col;
-    token->row = g_lexer.row;
-  }
-
-  // printf("%p %s\n", token, lexer_get_token_type_string(token_type));
-
   switch(token_type)
   {
     case TOKEN_IDENTIFIER:
     {
-      while(lexer_is_alphanumeric() || lexer_is_digit())
+      token = lexer_create_token();
+
+      while(lexer_is_alphanumeric() || lexer_is_digit() || lexer_is_char('_'))
       {
-        token->buffer[token->buffer_length++] = lexer_peek_char();
-
+        token->value_length++;        
         lexer_next_char();
-
-        if((lexer_is_alphanumeric() || lexer_is_digit()) && 
-          token->buffer_length == (TOKEN_BUFFER_CAPACITY - 2))
-        {
-          LOG(
-            ERROR, 
-            "To long identifier (Max. buffer size %i) on line %lli:%lli \"%s\"", 
-            TOKEN_BUFFER_CAPACITY, 
-            g_lexer.row, g_lexer.col,
-            token->buffer
-          );
-          exit(-1);
-        }
       }
 
-      token->buffer[token->buffer_length++] = '\0';
-
-      if(lexer_is_keyword(token->buffer))
+      if(lexer_is_keyword(token))
       {
         token->type = TOKEN_KEYWORD;
-      }
-      else if(lexer_is_typename(token->buffer))
-      {
-        token->type = TOKEN_TYPENAME;
       }
       else
       {
@@ -160,72 +90,30 @@ void lexer_push_token(int token_type)
     break;
     case TOKEN_NUMBER_LITERAL:
     {
-      unsigned char dots_count = 0;
+      token = lexer_create_token();
+      token->type = token_type;
 
       while(lexer_is_digit() || lexer_is_char('.'))
       {
-        token->buffer[token->buffer_length++] = lexer_peek_char();
-
+        token->value_length++;
         lexer_next_char();
-
-        if((lexer_is_digit() || lexer_is_char('.')) && 
-           (token->buffer_length > TOKEN_BUFFER_CAPACITY - 2))
-        {
-          LOG(
-            ERROR, 
-            "To long number (Max. buffer size %i) on %lli:%lli \"%s\"!", 
-            TOKEN_BUFFER_CAPACITY, 
-            g_lexer.row, 
-            g_lexer.col, 
-            token->buffer
-          );
-          exit(-1);
-        }
-
-        if(lexer_is_char('.'))
-        {
-          dots_count++;
-        }
-
-        if(dots_count == 2)
-        {
-          break;
-        }
       }
-
-      token->buffer[token->buffer_length] = '\0';
-      token->type = TOKEN_NUMBER_LITERAL;
     }
     break;
     case TOKEN_STRING_LITERAL:
     {
+      token = lexer_create_token();
       token->type = TOKEN_STRING_LITERAL;
 
       lexer_next_char();
 
       while(!lexer_is_char('"'))
       {
-        token->buffer[token->buffer_length] = lexer_peek_char();
-        token->buffer_length++;
-
+        token->value_length++;
         lexer_next_char();
-  
-        if(!lexer_is_char('"') && token->buffer_length == (TOKEN_BUFFER_CAPACITY - 3))
-        {
-          LOG(
-            ERROR, 
-            "To long string (Max. buffer size %i) on %lli:%lli \"%s\"", 
-            TOKEN_BUFFER_CAPACITY, 
-            g_lexer.row, 
-            g_lexer.col, 
-            token->buffer
-          );
-          exit(-1);
-        }
       }
 
-      token->buffer[++token->buffer_length] = '\0';
-
+      token->value_length++;
       lexer_next_char();
     }
     break;
@@ -234,20 +122,20 @@ void lexer_push_token(int token_type)
     case TOKEN_GREATER_THAN:
     case TOKEN_NOT:
     {
-      token->buffer[token->buffer_length++] = lexer_peek_char();
+      token = lexer_create_token();
+      token->value_length++;
 
       lexer_next_char();
 
       if(lexer_is_char('='))
       {
-        token->buffer[token->buffer_length++] = lexer_peek_char();
-        token->buffer[token->buffer_length] = '\0';
+        token->value_length++;
 
         switch(token_type)
         {
-          case TOKEN_NOT:          token->type = TOKEN_NOT_EQUAL; break;
-          case TOKEN_ASSIGN:       token->type = TOKEN_EQUAL_TO; break;
-          case TOKEN_LESS_THAN:    token->type = TOKEN_LESS_EQUAL_THAN; break;
+          case TOKEN_NOT:          token->type = TOKEN_NOT_EQUAL;          break;
+          case TOKEN_ASSIGN:       token->type = TOKEN_EQUAL_TO;           break;
+          case TOKEN_LESS_THAN:    token->type = TOKEN_LESS_EQUAL_THAN;    break;
           case TOKEN_GREATER_THAN: token->type = TOKEN_GREATER_EQUAL_THAN; break;
         }
         
@@ -280,15 +168,16 @@ void lexer_push_token(int token_type)
     case TOKEN_SEMI:
     case TOKEN_COLON:
     {
-      token->buffer[token->buffer_length++] = lexer_peek_char(); 
-      token->buffer[token->buffer_length] = '\0';
+      token = lexer_create_token();
+      token->value_length++;
       token->type = token_type;
       
       lexer_next_char();
     }
     break;
     case TOKEN_DIV:
-      const char ch = lexer_peek_char();
+    {
+      char* div_pos = lexer_get_cursor_pos();
 
       lexer_next_char();
 
@@ -301,29 +190,31 @@ void lexer_push_token(int token_type)
       }
       else
       {
-        token->buffer[token->buffer_length++] = ch; 
-        token->buffer[token->buffer_length] = '\0';
+        token = lexer_create_token();
+        token->value = div_pos;
+        token->value_length++;
         token->type = token_type;
         
         lexer_next_char();
       }
+    }
     break;
     case TOKEN_BIT_AND:
     case TOKEN_BIT_OR:
     {
-      token->buffer[token->buffer_length++] = lexer_peek_char();
+      token = lexer_create_token();
+      token->value_length++;
 
       lexer_next_char();
 
       if(lexer_is_char('|') || lexer_is_char('&'))
       {
-        token->buffer[token->buffer_length++] = lexer_peek_char();
-        token->buffer[token->buffer_length] = '\0';
+        token->value_length++;
 
         switch(token_type)
         {
-          case TOKEN_BIT_AND: token->type = TOKEN_AND;
-          case TOKEN_BIT_OR:  token->type = TOKEN_OR;
+          case TOKEN_BIT_AND: token->type = TOKEN_AND; break;
+          case TOKEN_BIT_OR:  token->type = TOKEN_OR;  break;
         }
       }
       else
@@ -336,22 +227,19 @@ void lexer_push_token(int token_type)
     break;
     case TOKEN_UNREACHABLE:
     {
-      LOG(
-        WARN, 
-        "Unreachable character \"%c\" in %lli:%lli near \"%s\"!\n", 
-        lexer_peek_char(), 
-        g_lexer.row, 
-        g_lexer.col, 
-        lexer_peek_token(-1)->buffer
-      );
-
-      token->buffer[token->buffer_length++] = lexer_peek_char();
+      token = lexer_create_token();
+      token->value_length++;
       token->type = TOKEN_UNREACHABLE;
 
       lexer_next_char();
     }
     break;
   }
+}
+
+char* lexer_get_cursor_pos()
+{
+  return g_lexer.pos;
 }
 
 char lexer_peek_char()
@@ -362,6 +250,7 @@ char lexer_peek_char()
 void lexer_next_char()
 {
   g_lexer.ch = getc(g_file);
+  g_lexer.pos++;
 
   if(g_lexer.ch != '\n')
   {
@@ -374,34 +263,42 @@ void lexer_next_char()
   }
 }
 
-unsigned char lexer_is_operator(int token_type)
+unsigned char lexer_is_operator(const t_token* token)
 {
   return(
-    token_type == TOKEN_EQUAL_TO ||
-    token_type == TOKEN_NOT_EQUAL ||
-    token_type == TOKEN_GREATER_THAN ||
-    token_type == TOKEN_LESS_THAN ||
-    token_type == TOKEN_GREATER_EQUAL_THAN ||
-    token_type == TOKEN_LESS_EQUAL_THAN ||
-    token_type == TOKEN_PLUS ||
-    token_type == TOKEN_MINUS ||
-    token_type == TOKEN_DIV ||
-    token_type == TOKEN_MUL ||
-    token_type == TOKEN_AND ||
-    token_type == TOKEN_OR ||
-    token_type == TOKEN_BIT_AND ||
-    token_type == TOKEN_BIT_OR
+    token->type == TOKEN_EQUAL_TO ||
+    token->type == TOKEN_NOT_EQUAL ||
+    token->type == TOKEN_GREATER_THAN ||
+    token->type == TOKEN_LESS_THAN ||
+    token->type == TOKEN_GREATER_EQUAL_THAN ||
+    token->type == TOKEN_LESS_EQUAL_THAN ||
+    token->type == TOKEN_PLUS ||
+    token->type == TOKEN_MINUS ||
+    token->type == TOKEN_DIV ||
+    token->type == TOKEN_MUL ||
+    token->type == TOKEN_AND ||
+    token->type == TOKEN_OR ||
+    token->type == TOKEN_BIT_AND ||
+    token->type == TOKEN_BIT_OR
   );
 }
 
-unsigned char lexer_is_keyword(const char* buffer)
+unsigned char lexer_is_keyword(const t_token* token)
 {
-  return cmap_has(&g_keywords, buffer);
-}
+  static const char* keywords[9] = {
+    "fn", "return", "if", "else", "for", "var", "const", "continue", "break"
+  };
+  static const char length = sizeof(keywords) / sizeof(keywords[0]);
 
-unsigned char lexer_is_typename(const char* buffer)
-{
-  return cmap_has(&g_typenames, buffer);
+  for(char index = 0; index < length; index++)
+  {
+    if(!strncmp(keywords[index], token->value, strlen(keywords[index])))
+    {
+      return 1;
+    }
+  }
+
+  return 0;
 }
 
 unsigned char lexer_is_char(char ch)
@@ -439,7 +336,6 @@ const char* lexer_get_token_type_string(int token_type)
   {
     case TOKEN_KEYWORD:            return "KEYWORD";
     case TOKEN_IDENTIFIER:         return "IDENTIFIER";
-    case TOKEN_TYPENAME:           return "TYPENAME";
     case TOKEN_WHITE_SPACE:        return "WHITE_SPACE";
     case TOKEN_NEW_LINE:           return "NEW_LINE";
     case TOKEN_CARRIAGE_RETURN:    return "CARRIAGE_RETURN";
@@ -483,10 +379,11 @@ void lexer_print_tokens()
     const t_token token = g_token_list.items[index];
     LOG(
       INFO, 
-      "[%.3lli] %12s \"%s\"\n", 
-      index, 
+      "[%.3lli] %12s \"%.*s\"\n", 
+      index + 1,
       lexer_get_token_type_string(token.type), 
-      token.buffer
+      (int)token.value_length,
+      token.value
     );
   }
 }
@@ -497,12 +394,6 @@ void lexer_print_tokens()
 
 void lexer_set_list_index(long long index)
 {
-  if(index > g_token_list.length)
-  {
-    LOG(ERROR, "Index %lli is bigger then length of the token list!\n", index);
-    exit(-1);
-  }
-
   g_token_list.index = index;
 }
 
@@ -515,38 +406,12 @@ t_token* lexer_expect_and_next_token(unsigned int token_type)
 {
   t_token* token = lexer_next_token();
 
-  if(token->type != token_type)
-  {
-    LOG(
-      ERROR, 
-      "Unexpected token \"%s\" on line %lli:%lli, expect %s!\n", 
-      token->buffer, 
-      token->row,
-      token->col, 
-      lexer_get_token_type_string(token_type)
-    );
-    exit(-1);
-  }
-
   return token;
 }
 
 t_token* lexer_expect_and_peek_token(unsigned int token_type, long long offset)
 {
   t_token* token = &g_token_list.items[(g_token_list.index - 1) + offset];
-
-  if(token->type != token_type)
-  {
-    LOG(
-      ERROR, 
-      "Unexpected token \"%s\" on line %lli:%lli, expect %s!\n", 
-      token->buffer, 
-      token->row,
-      token->col, 
-      lexer_get_token_type_string(token_type)
-    );
-    exit(-1);
-  }
 
   return token;
 }
@@ -557,12 +422,6 @@ t_token* lexer_consume_token()
   {
     g_token_list.capacity *= 2;
     t_token* tokens = (t_token*)realloc(g_token_list.items, sizeof(t_token) * g_token_list.capacity);
-
-    if(tokens == NULL)
-    {
-      LOG(ERROR, "Can not allocate memory for new tokens!\n");
-      exit(-1);
-    }
 
     if(tokens != g_token_list.items)
     {
@@ -588,10 +447,41 @@ t_token* lexer_peek_token(long long offset)
 
 t_token* lexer_next_token()
 {
+  t_token* token = NULL;
+
   if(g_token_list.index == g_token_list.length)
   {
     return NULL;
   }
+
+  token = &g_token_list.items[g_token_list.index++];
   
-  return &g_token_list.items[g_token_list.index++];
+  return token;
+}
+
+t_token* lexer_create_token()
+{
+  t_token* token = lexer_consume_token();
+  
+  token->col = g_lexer.col;
+  token->row = g_lexer.row;
+  token->value = g_lexer.pos;
+  token->value_length = 0;
+
+  return token;
+}
+
+long long lexer_get_index()
+{
+  return g_token_list.index;
+}
+
+void lexer_set_index(long long index)
+{
+  g_token_list.index = index;
+}
+
+unsigned char lexer_is_end_of_list()
+{
+  return g_token_list.index >= g_token_list.length;
 }

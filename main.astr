@@ -1,8 +1,1 @@
-fn main()
-{
-  var exitCode = 0;
-  var char = 65;
-
-  putchar(char);
-  exit(exitCode);
-}
+1 + 1

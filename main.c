@@ -1,10 +1,8 @@
-// clang -Wall -Wextra main.c ./src/lexer ./ -o main && ./main.exe
-
 #include "macros.h"
 #include "lexer.h"
-#include "parser.h"
 #include "nasm.h"
-// #include "code-generator.h"
+#include "scope.h"
+#include "expr.h"
 
 int main(int argc, char** argv)
 {
@@ -14,13 +12,12 @@ int main(int argc, char** argv)
     exit(-1);
   }
 
-  t_token_list* token_list = lexer_tokenize(argv[1]);
-  // lexer_print_tokens();
-  nasm_generate("output.nasm");
+  lexer_tokenize(argv[1]);
+  expr_parse();
+  // scope_analyse();
+  // nasm_generate("output.nasm");
 
-  // Compile NASM
-  // nasm -f win64 output.nasm && clang output.obj -o main.exe && ./main.exe
   system("nasm -f win64 output.nasm");
-  
+
   return 0;
 }

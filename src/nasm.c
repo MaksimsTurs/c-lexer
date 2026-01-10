@@ -1,148 +1,137 @@
-
 #include "nasm.h"
-#include "module.h"
 
 void nasm_generate(const char* output_path)
 {
-  t_module new_module = module_create(output_path);
+  t_file* file = fopen(output_path, "w+");
   t_token* token = lexer_next_token();
 
-  // Collect information about the function (Arguments/Local variables) and global
-  // variables.
-  while(token)
+  nasm_generate_fn_declarations(file, scope_get_global());
+
+  while(!lexer_is_end_of_list())
   {
-    if(token->type == TOKEN_KEYWORD && !strcmp(token->buffer, "fn"))
+    if(token->type == TOKEN_KEYWORD && !strncmp("fn", token->value, token->value_length))
     {
-      t_fn* fn = module_consume_fn(&new_module.fn_list);
-
-      module_collect_fn_args(fn);
-      module_collect_fn_local_vars(fn);
+      nasm_generate_fn_body(file);
     }
-
+    
     token = lexer_next_token();
   }
 
-  lexer_set_list_index(0);
-  token = lexer_next_token();
-
-  fprintf(new_module.file, "section .text\n\n");
-
-  for(long long index = 0; index < new_module.fn_list.length; index++)
-  {
-    t_fn* fn = &new_module.fn_list.items[index];
-
-    fprintf(new_module.file, "global %s\n", fn->name);
-  }
-
-  fprintf(new_module.file, "extern exit\n");
-  fprintf(new_module.file, "extern putchar\n");
-  fprintf(new_module.file, "\n");
-
-  while(token)
-  {
-    if(token->type == TOKEN_KEYWORD && !strcmp("fn", token->buffer))
-    {
-      nasm_generate_fn_body(&new_module);
-    }
-
-    token = lexer_next_token();
-  }
-
-  fclose(new_module.file);
+  fclose(file);
 }
 
-void nasm_generate_fn_call(t_module* module, const t_fn* caller)
+void nasm_generate_fn_body(t_file* file)
 {
-  t_token* token = lexer_expect_and_peek_token(TOKEN_IDENTIFIER, 0);
-  const char* calle_name = token->buffer;
-  long long register_index = 0;
+  t_token* token = lexer_next_token(); 
+  t_fn* fn = scope_get_fn(token);
+  t_fn* callee = NULL;
 
+  nasm_generate_fn_body_prologue(file, fn);
+  nasm_generate_fn_var_declarations(file, fn);
 
-  if(!strcmp("putchar", token->buffer) || !strcmp("exit", token->buffer))
-  {
-    token = lexer_expect_and_next_token(TOKEN_PBRACKET_L);
-    token = lexer_next_token();
-    
-
-    if(token->type == TOKEN_PBRACKET_R)
-    {
-
-    }
-    else if(token->type == TOKEN_IDENTIFIER)
-    {
-      while(token->type != TOKEN_PBRACKET_R)
-      {
-        if(token->type == TOKEN_IDENTIFIER)
-        {
-          t_var* arg = module_get_var(&caller->local_vars, token->buffer);
-    
-          if(arg == NULL)
-          {
-            LOG_NOT_DEFINED(token);
-          }
-
-          fprintf(module->file, "mov %s, %s\n", nasm_get_arg_register_name(register_index++), arg->value);
-        }
-
-        fprintf(module->file, "call %s\n", calle_name);
-        token = lexer_next_token();
-      }
-
-      token = lexer_expect_and_next_token(TOKEN_SEMI);
-    }
-  }
-  else
-  {
-    t_fn* called_fn = module_get_fn_data(&module->fn_list, token->buffer);
-  }
-}
-
-void nasm_generate_fn_body(t_module* module)
-{
-  t_token* token = lexer_expect_and_next_token(TOKEN_IDENTIFIER);
-  t_fn* fn = module_get_fn_data(&module->fn_list, token->buffer);
-  t_var* var = NULL;
-
-  fprintf(module->file, "%s:\n", fn->name);
-  fprintf(module->file, "push rbp\n");
-  fprintf(module->file, "mov rbp, rsp\n");
-  fprintf(module->file, "sub rsp, %lli\n", fn->local_vars.offset);
-  
   while(token->type != TOKEN_CBRACKET_L)
   {
     token = lexer_next_token();
   }
-  
-  while(token && token->type != TOKEN_CBRACKET_R)
+
+  while(token->type != TOKEN_CBRACKET_R && !lexer_is_end_of_list())
   {
-    if(token->type == TOKEN_KEYWORD && !strcmp("var", token->buffer))
-    {   
-      token = lexer_expect_and_next_token(TOKEN_IDENTIFIER);
-      var = module_get_var(&fn->local_vars, token->buffer);
-      
-      fprintf(module->file, "mov [rbp - %lli], %s\n", var->offset, var->value);
-    }
-    else if(token->type == TOKEN_IDENTIFIER && lexer_peek_token(1)->type == TOKEN_PBRACKET_L)
+    if(token->type == TOKEN_IDENTIFIER && lexer_peek_token(1)->type == TOKEN_PBRACKET_L)
     {
-      nasm_generate_fn_call(module, fn);
+      callee = scope_get_fn(token);
+      nasm_generate_fn_call(file, fn, callee);
     }
 
     token = lexer_next_token();
   }
 
-
-  fprintf(module->file, "pop rbp\n");
-  fprintf(module->file, "add rsp, %lli\n", fn->local_vars.offset);
+  nasm_generate_fn_body_epilogue(file, fn);
 }
 
-const char* nasm_get_arg_register_name(long long index)
+void nasm_generate_fn_var_declarations(t_file* file, t_fn* fn)
 {
-  static const char* arg_register_names[] = {
-    "rcx",
-    "rdx",
-    "r8",
-    "r9"
-  };
+  for(long long index = 0; index < fn->body->vars_length; index++)
+  {
+    t_var* var = &fn->body->vars[index];
 
-  return arg_register_names[index];
+    fprintf(file, "mov [rbp-%lli], %.*s\n", var->offset, var->value->value_length, var->value->value);
+  }
+}
+
+void nasm_generate_fn_body_prologue(t_file* file, t_fn* fn)
+{
+  fprintf(file, "%.*s:\n", fn->name->value_length, fn->name->value);
+  fprintf(file, "push rbp\n");
+  fprintf(file, "mov rbp, rsp\n");
+
+  if(fn->stack_size > 0)
+  {
+    fprintf(file, "sub rsp, %lli\n", fn->stack_size);
+  }
+
+  if(fn->args_length > 0)
+  {
+    for(long long index = 0; index < fn->args_length; index++)
+    {
+      t_arg* arg = &fn->args[index];
+      fprintf(file, "mov %s, [rbp-%lli]\n", nasm_get_register_name(index), (arg->index + 1) * 8);
+    }
+  }
+}
+
+void nasm_generate_fn_body_epilogue(t_file* file, t_fn* fn)
+{
+  if(fn->stack_size > 0)
+  {
+    fprintf(file, "add rsp, %lli\n", fn->stack_size);
+  }
+
+  fprintf(file, "pop rbp\n");
+  fprintf(file, "ret\n\n");
+}
+
+void nasm_generate_fn_declarations(t_file* file, t_scope* scope)
+{
+  fprintf(file, "section .text\n");
+  for(long long index = 0; index < scope->fns_length; index++)
+  {
+    t_fn* fn = &scope->fns[index];
+    fprintf(file, "global %.*s\n", fn->name->value_length, fn->name->value);
+  }
+  fprintf(file, "\n");
+}
+
+void nasm_generate_fn_call(t_file* file, t_fn* caller, t_fn* callee)
+{
+  t_token* token = lexer_next_token();
+  t_var* var = NULL;
+  long long index = 0;
+
+  while(token->type != TOKEN_PBRACKET_R)
+  {
+    if(token->type == TOKEN_IDENTIFIER)
+    {
+      var = scope_get_var(caller->body, token);
+      fprintf(file, "mov %s, [rbp-%lli]\n", nasm_get_register_name(index), var->offset);
+      index++;
+    }
+    else if(token->type == TOKEN_NUMBER_LITERAL)
+    {
+      fprintf(file, "mov %s, %.*s\n", nasm_get_register_name(index), token->value_length, token->value);
+      index++;
+    }
+
+    token = lexer_next_token();
+  }
+  
+  fprintf(file, "call %.*s\n", callee->name->value_length, callee->name->value);
+}
+
+const char* nasm_get_register_name(long long index)
+{
+  const static char* registers[4] = {
+    "rcx\0", "rdx\0", "r8\0", "r9\0"
+  };
+  
+  return registers[index];
 }
